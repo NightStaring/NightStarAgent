@@ -28,10 +28,10 @@ from .utils.text_splitter import get_text_splitter
 from .embedding.text_embedding import get_text_embedding_model
 from .embedding.text_bm25 import get_bm25_embedding_model
 from .embedding.image_embedding import get_image_embedding_model
-# from ..storage import VectorStore
+from .vector_db.db import VectorDB
 from .utils import image_utils
-# from ..utils.caption_utils import generate_caption
-# from ..utils.ocr_utils import get_ocr_model
+from .utils.image2caption import get_image2caption_model
+from .utils.ocr_utils import get_ocr_model
 
 
 def get_file_type(file_path: str):
@@ -69,7 +69,8 @@ class DocumentProcessor:
 
         self._uid = file_id
 
-        self._vector_store = VectorStore()
+        self._vector_store = VectorDB()
+        self._vector_store.create_all_collections()
 
         self._text_embedding = get_text_embedding_model()
 
@@ -86,7 +87,7 @@ class DocumentProcessor:
         预处理阶段：执行解析并标准化资源引用。
 
         - 调用对应解析器，产出图片和页面预览
-        """
+        """        
         parser_start_time = time.time()
         self._parser.parse()
         for image_path in self._parser.parsed_images():
@@ -141,11 +142,9 @@ class DocumentProcessor:
                 "chunk_id": uuid.uuid4().hex,
 
                 "file_path": self._file_path,
-                "file_url": self._file_url,
                 "filename": self._filename,
                 "created": time.time(),
                 "split_type": "default"
-
             }
                 for j, (text, embedding, bm25_embedding) in
                 enumerate(zip(chunk_texts_batch, chunk_texts_embeddings, chunk_bm25_embeddings))
@@ -154,9 +153,8 @@ class DocumentProcessor:
             self._vector_store.add_text_chunks(chunk_data)
             logger.info(f"Processed {len(chunk_texts_batch)} text chunks")
 
-        enable_sub_chunk = os.getenv("ENABLE_SUB_CHUNK_ENHANCE")
-
         # 子块增强：将大块进一步切小，提高细粒度召回命中率。
+        enable_sub_chunk = os.getenv("ENABLE_SUB_CHUNK_ENHANCE")
         sub_chunk_size = int(os.getenv("SUB_CHUNK_SIZE", 100))
         splitter = get_text_splitter(chunk_type="default", chunk_size=sub_chunk_size, chunk_overlap=0)
         sub_text_chunks = []
@@ -176,7 +174,6 @@ class DocumentProcessor:
                         "chunk_id": uuid.uuid4().hex,
 
                         "file_path": self._file_path,
-                        "file_url": self._file_url,
                         "filename": self._filename,
                         "created": time.time(),
                         "split_type": "default"
@@ -231,10 +228,8 @@ class DocumentProcessor:
                     "vector": embedding,
                     "file_path": self._file_path,
                     "image_path": image_path,
-                    "file_url": self._file_url,
                     "filename": self._filename,
                     "created": time.time(),
-                    "image_url": self._image_urls[base_name],
                 })
             self._vector_store.add_image_chunks(chunk_data)
 
@@ -242,7 +237,7 @@ class DocumentProcessor:
             text_chunk_data = []
             for j, image_path in enumerate(image_paths_batch):
                 ocr_text = self._ocr.ocr(image_path)
-                caption = generate_caption(image_path)
+                caption = get_image2caption_model().image2caption(image_path)
                 base_name = os.path.basename(image_path)
                 if ocr_text:
                     text_chunk_data.append({
@@ -256,11 +251,9 @@ class DocumentProcessor:
                         "file_sorted": f"{self._uid}-{i + j}",
                         "chunk_type": "ocr_text",
                         "file_path": self._file_path,
-                        "file_url": self._file_url,
                         "image_path": image_path,
                         "filename": self._filename,
                         "created": time.time(),
-                        "image_url": self._image_urls[base_name],
                     })
                 if caption:
                     text_chunk_data.append({
@@ -275,11 +268,9 @@ class DocumentProcessor:
                         "file_sorted": f"{self._uid}-{i + j}",
                         "chunk_type": "caption",
                         "file_path": self._file_path,
-                        "file_url": self._file_url,
                         "image_path": image_path,
                         "filename": self._filename,
                         "created": time.time(),
-                        "image_url": self._image_urls[base_name],
                     })
             if text_chunk_data:
                 text_batch = [chunk['text'] for chunk in text_chunk_data]
@@ -328,18 +319,16 @@ class DocumentProcessor:
                     "chunk_type": "page",
                     "vector": embedding,
                     "file_path": self._file_path,
-                    "file_url": self._file_url,
                     "page_path": image_path,
                     "filename": self._filename,
                     "created": time.time(),
-                    "image_url": self._image_urls[base_name],
                 })
             self._vector_store.add_page_chunks(chunk_data)
 
         text_chunk_data = []
         for j, image_path in enumerate(page_paths):
             ocr_text = self._ocr.ocr(image_path)
-            caption = generate_caption(image_path)
+            caption = get_image2caption_model().image2caption(image_path)
             base_name = os.path.basename(image_path)
             if ocr_text:
                 text_chunk_data.append({
@@ -354,11 +343,9 @@ class DocumentProcessor:
                     "file_sorted": f"{self._uid}-{j}",
                     "chunk_type": "ocr_text",
                     "file_path": self._file_path,
-                    "file_url": self._file_url,
                     "page_path": image_path,
                     "filename": self._filename,
                     "created": time.time(),
-                    "image_url": self._image_urls[base_name],
                 })
             if caption:
                 text_chunk_data.append({
@@ -373,11 +360,9 @@ class DocumentProcessor:
                     "file_sorted": f"{self._uid}-{j}",
                     "chunk_type": "caption",
                     "file_path": self._file_path,
-                    "file_url": self._file_url,
                     "page_path": image_path,
                     "filename": self._filename,
                     "created": time.time(),
-                    "image_url": self._image_urls[base_name],
                 })
         if text_chunk_data:
             text_batch = [chunk['text'] for chunk in text_chunk_data]

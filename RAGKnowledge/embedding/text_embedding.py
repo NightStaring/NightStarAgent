@@ -1,16 +1,16 @@
 import os
 from typing import List
 
-import dotenv
 from ..utils.logger_utils import logger
-from openai import OpenAI
-
 from .embedding import TextEmbedding
-
-dotenv.load_dotenv()
+from ..utils.models_client import get_client
 
 
 class OpenAITextEmbedding(TextEmbedding):
+    def __init__(self):
+        super().__init__()
+        self.client = get_client()
+        self.model_name = "BAAI/bge-m3"
 
     def _encode_text_batch(self, texts: List[str]) -> list[list[float]]:
         """
@@ -29,20 +29,17 @@ class OpenAITextEmbedding(TextEmbedding):
         texts = [text[:max_text_length] for text in texts]
 
         try:
-            client = OpenAI(
-                base_url="https://api.siliconflow.cn/v1",
-                api_key=os.getenv("SILICONFLOW_API"),
-            )
-
             batch_size = 10
             embeddings = []
             for i in range(0, len(texts), batch_size):
                 batch_texts = texts[i:i + batch_size]
-                response = client.embeddings.create(
-                    model="BAAI/bge-m3",
+                logger.info(f"正在编码文本: {batch_texts}")
+                response = self.client.embeddings.create(
+                    model=self.model_name,
                     input=batch_texts,
                     timeout=int(os.getenv("API_TIMEOUT", 300)),
                 )
+                logger.info(f"文本编码完成: {response.data}")
                 response_data = response.data
                 if not response_data:
                     raise ValueError("文本编码失败: 未返回任何数据")
