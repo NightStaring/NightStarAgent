@@ -1,0 +1,15 @@
+
+
+vector_db:
+  db_type: Qdrant
+  text_collection: Chart_MRAG_text
+  image_collection: Chart_MRAG_image
+  page_collection: Chart_MRAG_page
+  text_dimension: 1024
+  image_dimension: 4096
+  page_dimension: 4096
+
+  Qdrant:
+    url: http://127.0.0.1
+    port: 6334
+    api_key: ${QDRANT_API_KEY}

@@ -8,13 +8,13 @@ from PIL import Image
 from .embedding import ImageEmbedding
 from ..utils import image_utils
 from ..utils.logger_utils import logger
-
+from ..utils.models_client import get_client
 
 class QwenVLEmbedding(ImageEmbedding):
     def __init__(self):
         super().__init__()
         self.timeout = int(os.getenv("API_TIMEOUT", 300))
-        self.api_key = os.getenv("SILICONFLOW_API")
+        self.client = get_client()
         self.model_name = "Qwen/Qwen3-VL-Embedding-8B"
         self.url = "https://api.siliconflow.cn/v1/embeddings"
 
@@ -32,16 +32,13 @@ class QwenVLEmbedding(ImageEmbedding):
         return "data:image/png;base64," + image_utils.image_to_base64(image)
 
     def _encode_image(self, image: Image.Image) -> list[float]:
-        
-        client = OpenAI(
-            base_url="https://api.siliconflow.cn/v1",
-            api_key=os.getenv("SILICONFLOW_API"),
-        )
-        response = client.embeddings.create(
+        logger.info(f"正在编码图片: {image}")
+        response = self.client.embeddings.create(
             model=self.model_name,
             input=[{"image": self._image_to_base64(image)}],
             timeout=self.timeout
         )
+        logger.info(f"图片编码完成: {response.data}")
         return response.data[0].embedding
 
     def _encode_image_batch(self, images: List[Image.Image]) -> list[list[float]]:

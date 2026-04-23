@@ -1,148 +1,222 @@
-# RAGKnowledge 解析与切分原则
+# RAGKnowledge
 
-本文档用于总结当前代码中：
-- 不同文件类型的解析原则（`utils/file_paser.py`）
-- 不同文档切分策略的原则（`utils/text_splitter.py`）
+本项目用于将多类型文档离线处理后写入 Qdrant，形成可检索的多模态知识库。  
+当前主流程覆盖：
+
+- 文档解析（DOCX / Markdown / PDF / 图片）
+- 文本切分（默认切分 + Markdown 标题切分）
+- 向量编码（文本 dense + BM25 sparse + 图像 embedding）
+- OCR / Caption 文本增强
+- 向量入库（文本、图片、页面三路集合）
 
 ---
 
-## 一、统一处理约定
+## 1. 快速运行
 
-无论输入是什么文件类型，解析阶段都尽量统一产出到同一工作目录结构：
+### 1.1 命令行运行
+
+```bash
+python -m RAGKnowledge.run
+```
+
+### 1.2 双击脚本运行（Windows）
+
+使用 `RAGKnowledge/run_click.bat`：
+- 自动切到项目目录
+- 尝试激活 `conda` 的 `agent` 环境
+- 运行时日志同时打印并写入 `logs/run_yyyyMMdd_HHmmss.log`
+
+---
+
+## 2. 当前运行入口说明
+
+`RAGKnowledge/run.py` 提供以下函数：
+
+- `show_db_info()`：打印当前集合列表
+- `create_db()`：创建配置中的三个集合并打印信息
+- `clear_db()`：按配置删除三个集合并打印信息
+- `main()`：遍历数据目录，执行文档处理并入库
+
+默认处理目录（当前代码）：
+
+- 输入：`RAGKnowledge/dataset/Chart-MRAG/files`
+- 输出工作目录：`RAGKnowledge/dataset/Chart-MRAG/knowledge/<文件名去后缀>/`
+
+---
+
+## 3. 配置说明（`config/config.yaml`）
+
+当前主要配置项：
+
+```yaml
+vector_db:
+  db_type: Qdrant
+  text_collection: Chart_MRAG_text
+  image_collection: Chart_MRAG_image
+  page_collection: Chart_MRAG_page
+  text_dimension: 1024
+  image_dimension: 4096
+  page_dimension: 4096
+  Qdrant:
+    url: http://127.0.0.1
+    port: 6334
+    api_key: ${QDRANT_API_KEY}
+```
+
+说明：
+- 配置由 `config/config.py` 读取，支持 `${ENV_VAR}` 占位符。
+- 会自动加载项目根目录 `.env`。
+- `VectorDB` 为单例，首次初始化后会缓存配置。
+
+---
+
+## 4. 文档解析产物约定
+
+解析统一落到同一工作目录：
 
 ```text
 work_dir/
-|-- <file_name>.md        # 解析后的文本主文件（统一为 markdown）
-|-- images/               # 从文档中抽取出的图片
-|-- pages/                # 页面级预览图（整页截图）
+|-- <file_name>.md
+|-- images/
+|-- pages/
 ```
 
-后续离线处理（见 `file_processer.py`）会基于这三类产物分别做：
-- 文本切分与向量化
-- 图片向量化 + OCR/Caption 文本化
-- 页面图向量化 + OCR/Caption 文本化
+### 4.1 DOCX
+
+- 提取文本、表格、内嵌图到 Markdown + images
+- 尝试将每页转图到 pages（`docx2pdf/libreoffice/unoconv`）
+- 页面转换失败不阻断主流程
+
+### 4.2 Markdown
+
+- 复制到标准 md 路径
+- 下载 HTTP/HTTPS 图片到 `images/` 并改写链接
+- 尝试生成页面预览图（`imgkit` 或 `playwright`）
+
+### 4.3 PDF
+
+- `fitz` 提取文本和内嵌图
+- `pdfplumber` 提取表格
+- 尝试 `pdf2image` 生成 `pages/`
+
+### 4.4 图片
+
+- Markdown 写空
+- 原图复制到 `pages/`
 
 ---
 
-## 二、不同文件类型的解析原则
+## 5. 文本切分策略（`utils/text_splitter.py`）
 
-### 1) DOCX（`DocxDocumentParser`）
+### 5.1 默认策略
 
-核心原则：**结构化提取 + 尽量保留语义层级**。
+- `CHUNK_SIZE` 默认 500
+- `CHUNK_OVERLAP` 默认 100
+- 先句级切片（URL/引号保护）再组装 chunk
 
-- 先处理 Word 修订痕迹（Track Changes），尽量保留“最终可见内容”。
-- 段落文本写入 markdown：
-  - 英文标题样式（Heading 1~6）映射为 `#` 到 `######`
-  - 中文常见层级（如“一、”“（一）”“1.”）也会尝试映射为标题级别
-  - 普通段落按正文写入
-- 表格转换为 markdown table 语法。
-- 内嵌图片抽取到 `images/`，并在 markdown 插入图片引用。
-- 页面预览图优先通过“docx -> pdf -> page images”生成，按以下顺序尝试：
-  - `docx2pdf`（Windows）
-  - `LibreOffice`
-  - `unoconv`
+### 5.2 Markdown 策略
 
-### 2) Markdown（`MarkdownDocumentParser`）
+- 先按 `#`~`######` 标题切分
+- 再按大小合并
+- 超大块回退默认切分器
 
-核心原则：**尽量保持原文，同时把远程资源本地化**。
+注意：`get_text_splitter()` 当前依赖 `CHUNK_TYPE`，若环境变量未设置，建议设置为：
 
-- 若源 md 不在 `work_dir`，会复制到标准位置 `<file_name>.md`。
-- 扫描 markdown 中的 HTTP/HTTPS 图片链接并下载到 `images/`。
-- 下载成功后，把文内图片链接替换为本地 `images/...` 路径。
-- 页面预览优先尝试：
-  - `markdown2 + imgkit`
-  - `markdown2 + playwright`
+```env
+CHUNK_TYPE=default
+```
 
-### 3) PDF（`PdfParser`）
+### 5.3 子块增强（Sub-chunk Enhance）
 
-核心原则：**本地直读优先，文本/表格/图片三路提取**。
+`file_processer.py` 的 `_process_text()` 支持可选“子块增强”：
 
-- 使用 `fitz` 提取文本与内嵌图片（图片写入 `images/`）。
-- 使用 `pdfplumber` 提取表格并追加到 markdown 文本。
-- 再使用 `pdf2image` 生成每页预览图到 `pages/`。
-- 页面预览失败不会阻断主流程（主流程以文本抽取成功为先）。
+- 主块切分后，可再进行一次更细粒度切分
+- 子块也会生成 dense + sparse 向量并入文本集合
+- 适合提升短问句、局部事实的召回命中
 
-### 4) 图片文件（`ImageParser`）
+相关环境变量：
 
-核心原则：**把图片作为页面输入，文本留空**。
+```env
+ENABLE_SUB_CHUNK_ENHANCE=true
+SUB_CHUNK_SIZE=100
+```
 
-- markdown 文件写空字符串。
-- 原图复制到 `pages/`，供后续 OCR、Caption、图像向量化使用。
-- 当前支持后缀：`.png/.jpg/.jpeg`。
-
-### 5) 文件类型路由
-
-统一入口 `get_document_parser(file_extension)`：
-- `.docx` -> `DocxDocumentParser`
-- `.md` -> `MarkdownDocumentParser`
-- `.pdf` -> `PdfParser`
-- `.png/.jpg/.jpeg` -> `ImageParser`
-- 其他后缀直接抛错（不支持）
+说明：
+- `ENABLE_SUB_CHUNK_ENHANCE` 开启后生效
+- 子块切分器固定使用 `default`，并设置 `chunk_overlap=0`
+- 主块与子块会共同存在于文本集合中，检索时统一参与召回
+- 当前实现中子块 payload 的 `text` 字段沿用父块文本，向量来自子块文本（用于保留上下文）
 
 ---
 
-## 三、文档切分原则（`utils/text_splitter.py`）
+## 6. 向量入库与载荷（Payload）
 
-### 1) 切分目标
+### 6.1 三路集合
 
-切分的核心目标是：**在不破坏语义连续性的前提下，生成适合检索与向量化的 chunk**。
+- 文本集合：`text_collection`
+- 图像集合：`image_collection`
+- 页面集合：`page_collection`
 
-默认受以下参数控制（可由环境变量覆盖）：
-- `CHUNK_SIZE`（默认 500）
-- `CHUNK_OVERLAP`（默认 100）
+### 6.2 入库内容
 
-### 2) 策略优先级
+- `text`：文本 chunk 的 dense + sparse 向量
+- `image/page`：图像向量
+- `ocr_text/caption`：作为文本再入文本集合
 
-`text_split_to_chunks(...)` 的执行优先级：
+### 6.3 Payload 特点
 
-1. 若传入 `separators`，直接按用户分隔符切分（可选保留分隔符）。
-2. 否则使用默认策略：
-   - 先句级切片（`SplitSentence`）
-   - 再按 `chunk_size/chunk_overlap` 聚合为 chunk
-
-### 3) 句级切片原则（`SplitSentence`）
-
-为避免“错误断句”，句切分时有额外规则：
-
-- 使用中文句号、感叹号、换行等做粗切分。
-- 对 URL 做保护，尽量不在链接中间切断。
-- 对中英文引号做配对处理，尽量把引号与其内容保留在同一片段。
-
-### 4) chunk 组装原则（默认切分器）
-
-采用“指针滑动 + 左右拼接”思路：
-
-- 向左回看，控制重叠区域（`chunk_overlap`）
-- 向右累加，直到接近块大小上限（`chunk_size`）
-- 对生成块做清洗（去空白、去空块）
-
-这一策略兼顾了：
-- 相邻块的语义衔接（通过 overlap）
-- 单块长度可控（利于向量模型与检索效率）
-
-### 5) Markdown 专用切分（`MarkdownDocumentSplitter`）
-
-核心原则：**先结构、后长度**。
-
-- 先按 `#` 到 `######` 标题层级拆分。
-- 尽可能在不超过 `chunk_size` 的情况下合并相邻块。
-- 对超大块回退到默认切分器做二次切分。
-- 生成 chunk 时会补回标题上下文，降低“离开章节语境后语义丢失”的问题。
-
-### 6) 切分器工厂（`get_text_splitter`）
-
-- `chunk_type=default` -> `DefaultDocumentSplitter`
-- `chunk_type=markdown` -> `MarkdownDocumentSplitter`
-- 未识别类型 -> 抛错
+- 文本类通常包含 `text` + 各种业务字段（`kb_id/file_id/chunk_type/...`）
+- 图像/页面类包含路径、ID、类型等元数据，不存图片二进制
 
 ---
 
-## 四、与离线入库流程的衔接
+## 7. Qdrant 连接与常见问题
 
-在 `file_processer.py` 中，解析与切分后的数据会进入三路索引：
+### 7.1 集合不存在（NOT_FOUND）
 
-- 文本路：`text` chunk -> dense 向量 + BM25 稀疏向量
-- 图片路：图片 -> 图像向量；同时生成 OCR/Caption 并走文本向量路
-- 页面路：页面图 -> 图像向量；同时生成 OCR/Caption 并走文本向量路
+现象：
+- `Collection 'text/image/page' doesn't exist`
 
-并支持可选子块增强（`ENABLE_SUB_CHUNK_ENHANCE` + `SUB_CHUNK_SIZE`），用于提高细粒度召回命中率。
+原因：
+- 未创建集合就开始写入
+
+建议：
+- 先执行 `create_db()` 或确保 `create_all_collections()` 在入库前执行
+
+### 7.2 DOCX 页面图未生成
+
+日志提示：
+- `docx2pdf 或 pdf2image 未安装`
+
+说明：
+- 仅影响 `pages/` 产物，不影响文本和图片抽取主流程
+
+### 7.3 VLM/OCR 请求长时间阻塞
+
+可通过 `.env` 设置：
+
+```env
+API_TIMEOUT=60
+```
+
+---
+
+## 8. 清库脚本
+
+`RAGKnowledge/clear_db.py`：按当前配置删除 `text/image/page` 集合。
+
+```bash
+python -m RAGKnowledge.clear_db
+```
+
+---
+
+## 9. 关键模块速览
+
+- `run.py`：主入口与管理函数
+- `file_processer.py`：离线处理主流程
+- `utils/file_paser.py`：文档解析
+- `utils/text_splitter.py`：文本切分
+- `vector_db/db.py`：向量库统一接口（单例）
+- `vector_db/qdrant_db.py`：Qdrant 具体实现
+- `config/config.py`：配置读取与缓存
