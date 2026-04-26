@@ -39,7 +39,7 @@ class OpenAITextEmbedding(TextEmbedding):
                     input=batch_texts,
                     timeout=int(os.getenv("API_TIMEOUT", 300)),
                 )
-                logger.info(f"文本编码完成: {response.data}")
+                logger.info(f"文本编码完成.")
                 response_data = response.data
                 if not response_data:
                     raise ValueError("文本编码失败: 未返回任何数据")
