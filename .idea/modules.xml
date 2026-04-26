@@ -4,6 +4,7 @@
     <modules>
       <module fileurl="file://$PROJECT_DIR$/NightStarAgent.iml" filepath="$PROJECT_DIR$/NightStarAgent.iml" />
       <module fileurl="file://$PROJECT_DIR$/RAGKnowledge/RAGKnowledge.iml" filepath="$PROJECT_DIR$/RAGKnowledge/RAGKnowledge.iml" />
+      <module fileurl="file://$PROJECT_DIR$/front/front.iml" filepath="$PROJECT_DIR$/front/front.iml" />
     </modules>
   </component>
 </project>

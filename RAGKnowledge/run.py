@@ -1,6 +1,11 @@
 """
 运行RAGKnowledge
 files_path: 需要处理的文件路径
+
+python -m RAGKnowledge.run
+
+终端输出同时写入 .log（PowerShell，仍可在终端看到）:
+python -m RAGKnowledge.run 2>&1 | Tee-Object -FilePath logs/run_0.log
 """
 
 
@@ -12,6 +17,7 @@ from .file_processer import DocumentProcessor
 from .config import get_config
 from .utils.logger_utils import logger
 from .vector_db.db import VectorDB
+from .agent import AgenticRAG
 
 
 def show_db_info():
@@ -35,7 +41,10 @@ def clear_db():
         logger.info(f"已删除集合: {name}")
     show_db_info()
 
-def main():
+"""
+处理文档并写入向量库
+"""
+def process_documents():
     files_path = os.path.join(os.path.dirname(__file__), "dataset", "Chart-MRAG", "files")
     files = os.listdir(files_path)
     for file in tqdm(files):
@@ -51,5 +60,16 @@ def main():
         except Exception as e:
             logger.error(f"处理文件 {file} 失败: {e}")
 
+"""
+agent
+"""
+def agent():
+    question = "公司去年业绩如何？"
+    agentic_rag = AgenticRAG(
+        kb_id="chart-mrag",
+        n_round=5
+    )
+    logger.info(agentic_rag.run(question))
+
 if __name__ == "__main__":
-    main()
+    agent()

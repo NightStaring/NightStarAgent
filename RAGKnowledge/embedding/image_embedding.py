@@ -38,7 +38,7 @@ class QwenVLEmbedding(ImageEmbedding):
             input=[{"image": self._image_to_base64(image)}],
             timeout=self.timeout
         )
-        logger.info(f"图片编码完成: {response.data}")
+        logger.info(f"图片编码完成.")
         return response.data[0].embedding
 
     def _encode_image_batch(self, images: List[Image.Image]) -> list[list[float]]:
