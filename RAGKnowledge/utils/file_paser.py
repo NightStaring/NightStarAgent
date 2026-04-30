@@ -1063,6 +1063,260 @@ class ImageParser(DocumentParser):
         shutil.copy(self._file_path, self._pages_dir)
 
 
+class PPTParser(DocumentParser):
+    """PPT文档解析器"""
+
+    def __init__(self, work_dir: str, file_path: str):
+        super().__init__(work_dir, file_path)
+
+    def parse(self):
+        """
+        解析PPT文档
+        执行完整的解析流程：
+        1. 将PPT转换为PDF
+        2. 使用PDF解析器处理转换后的PDF
+        """
+        try:
+            logger.info(f"开始解析 PPT 文档: {self._file_path}")
+
+            # 1. 将PPT转换为PDF
+            pdf_path = self._convert_ppt_to_pdf()
+
+            if not pdf_path or not os.path.exists(pdf_path):
+                logger.error(f"PPT转换为PDF失败: {self._file_path}")
+                return False
+
+            logger.info(f"PPT已转换为PDF: {pdf_path}")
+
+            # 2. 使用PDF解析器处理转换后的PDF
+            pdf_parser = PdfParser(self._work_dir, pdf_path)
+            success = pdf_parser.parse()
+
+            # 3. 清理临时PDF文件
+            if os.path.exists(pdf_path):
+                os.remove(pdf_path)
+                logger.debug(f"已删除临时PDF文件: {pdf_path}")
+
+            if success:
+                logger.info(f"PPT 文档解析完成: {self._file_path}")
+            else:
+                logger.error(f"PPT 文档解析失败: {self._file_path}")
+
+            return success
+
+        except Exception as e:
+            import traceback
+            logger.error(traceback.format_exc())
+            logger.error(f"解析 PPT 文档失败: {self._file_path}, 错误: {e}")
+            return False
+
+    def _convert_ppt_to_pdf(self) -> str:
+        """
+        将PPT转换为PDF
+        尝试多种方法进行转换
+        Returns:
+            str: 转换后的PDF文件路径，如果失败则返回None
+        """
+        try:
+            logger.info(f"开始将 PPT 转换为 PDF: {self._file_path}")
+
+            # 尝试使用不同的方法转换
+            pdf_path = None
+
+            # 方法1: 尝试使用 comtypes (Windows，需要 Microsoft PowerPoint)
+            if os.name == 'nt':
+                pdf_path = self._convert_with_comtypes()
+
+            # 方法2: 尝试使用 LibreOffice (跨平台)
+            if not pdf_path:
+                pdf_path = self._convert_with_libreoffice()
+
+            # 方法3: 尝试使用 unoconv (Linux)
+            if not pdf_path:
+                pdf_path = self._convert_with_unoconv()
+
+            if pdf_path:
+                logger.info(f"PPT转换为PDF成功: {pdf_path}")
+            else:
+                logger.warning(
+                    "无法将 PPT 转换为 PDF。请安装以下工具之一：\n"
+                    "- Windows: pip install comtypes (需要 Microsoft PowerPoint)\n"
+                    "- Linux/Mac: 安装 LibreOffice\n"
+                    "- Linux: 安装 unoconv"
+                )
+
+            return pdf_path
+
+        except Exception as e:
+            logger.error(f"转换PPT为PDF失败: {e}")
+            return None
+
+    def _convert_with_comtypes(self) -> str:
+        """
+        使用 comtypes 库转换（Windows，需要 Microsoft PowerPoint）
+        Returns:
+            str: 转换后的PDF文件路径，如果失败则返回None
+        """
+        try:
+            import comtypes.client
+            import comtypes
+
+            logger.info("尝试使用 comtypes 转换...")
+
+            # 生成PDF路径
+            pdf_path = os.path.join(self._work_dir, f"{self._filename}.pdf")
+
+            # 初始化PowerPoint应用
+            powerpoint = comtypes.client.CreateObject("Powerpoint.Application")
+            powerpoint.Visible = 1
+
+            # 打开PPT文件
+            deck = powerpoint.Presentations.Open(os.path.abspath(self._file_path))
+
+            # 保存为PDF
+            # 32 = ppSaveAsPDF
+            deck.SaveAs(os.path.abspath(pdf_path), 32)
+
+            # 关闭PPT和PowerPoint
+            deck.Close()
+            powerpoint.Quit()
+
+            logger.info(f"使用 comtypes 转换成功: {pdf_path}")
+            return pdf_path
+
+        except ImportError:
+            logger.debug("comtypes 未安装")
+            return None
+        except Exception as e:
+            logger.debug(f"comtypes 转换失败: {e}")
+            return None
+
+    def _convert_with_libreoffice(self) -> str:
+        """
+        使用 LibreOffice 转换（跨平台）
+        Returns:
+            str: 转换后的PDF文件路径，如果失败则返回None
+        """
+        try:
+            import subprocess
+
+            logger.info("尝试使用 LibreOffice 转换...")
+
+            # 检查 LibreOffice 是否安装
+            libreoffice_cmd = None
+            for cmd in ['libreoffice', 'soffice']:
+                try:
+                    subprocess.run([cmd, '--version'],
+                                   capture_output=True,
+                                   check=True,
+                                   timeout=5)
+                    libreoffice_cmd = cmd
+                    break
+                except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                    continue
+
+            if not libreoffice_cmd:
+                logger.debug("LibreOffice 未安装")
+                return None
+
+            # 生成PDF路径
+            pdf_path = os.path.join(self._work_dir, f"{self._filename}.pdf")
+
+            # 使用 LibreOffice 转换
+            cmd = [
+                libreoffice_cmd,
+                '--headless',
+                '--convert-to', 'pdf',
+                '--outdir', self._work_dir,
+                self._file_path
+            ]
+
+            result = subprocess.run(cmd,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=120)
+
+            if result.returncode != 0:
+                logger.debug(f"LibreOffice 转换失败: {result.stderr}")
+                return None
+
+            # 检查 PDF 是否生成
+            if not os.path.exists(pdf_path):
+                logger.debug("PDF 文件未生成")
+                return None
+
+            logger.info(f"使用 LibreOffice 转换成功: {pdf_path}")
+            return pdf_path
+
+        except ImportError:
+            logger.debug("subprocess 不可用")
+            return None
+        except subprocess.TimeoutExpired:
+            logger.debug("LibreOffice 转换超时")
+            return None
+        except Exception as e:
+            logger.debug(f"LibreOffice 转换失败: {e}")
+            return None
+
+    def _convert_with_unoconv(self) -> str:
+        """
+        使用 unoconv 转换（Linux）
+        Returns:
+            str: 转换后的PDF文件路径，如果失败则返回None
+        """
+        try:
+            import subprocess
+
+            logger.info("尝试使用 unoconv 转换...")
+
+            # 检查 unoconv 是否安装
+            try:
+                subprocess.run(['unoconv', '--version'],
+                               capture_output=True,
+                               check=True,
+                               timeout=5)
+            except (subprocess.CalledProcessError, FileNotFoundError, subprocess.TimeoutExpired):
+                logger.debug("unoconv 未安装")
+                return None
+
+            # 生成PDF路径
+            pdf_path = os.path.join(self._work_dir, f"{self._filename}.pdf")
+
+            cmd = [
+                'unoconv',
+                '-f', 'pdf',
+                '-o', pdf_path,
+                self._file_path
+            ]
+
+            result = subprocess.run(cmd,
+                                    capture_output=True,
+                                    text=True,
+                                    timeout=120)
+
+            if result.returncode != 0:
+                logger.debug(f"unoconv 转换失败: {result.stderr}")
+                return None
+
+            # 检查 PDF 是否生成
+            if not os.path.exists(pdf_path):
+                logger.debug("PDF 文件未生成")
+                return None
+
+            logger.info(f"使用 unoconv 转换成功: {pdf_path}")
+            return pdf_path
+
+        except ImportError:
+            logger.debug("subprocess 不可用")
+            return None
+        except subprocess.TimeoutExpired:
+            logger.debug("unoconv 转换超时")
+            return None
+        except Exception as e:
+            logger.debug(f"unoconv 转换失败: {e}")
+            return None
+
+
 def get_document_parser(file_extension: str):
     if file_extension == ".docx":
         return DocxDocumentParser
@@ -1072,5 +1326,7 @@ def get_document_parser(file_extension: str):
         return PdfParser
     elif file_extension in {".png", ".jpg", ".jpeg"}:
         return ImageParser
+    elif file_extension in {".ppt", ".pptx"}:
+        return PPTParser
     else:
         raise ValueError(f"Unsupported file extension: {file_extension}")
