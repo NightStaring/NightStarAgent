@@ -943,10 +943,10 @@ class PdfParser(DocumentParser):
     def __init__(self, work_dir: str, file_path: str):
         super().__init__(work_dir, file_path)
 
-        self.headers = {
-            "Content-Type": "application/json",
-            "Authorization": "Bearer " + os.getenv("MINERU_API_KEY"),
-        }
+        # self.headers = {
+        #     "Content-Type": "application/json",
+        #     "Authorization": "Bearer " + os.getenv("MINERU_API_KEY"),
+        # }
         self.uid = uuid.uuid4().hex
 
     def _get_pdf_page_count(self) -> int:
@@ -1050,6 +1050,8 @@ class PdfParser(DocumentParser):
         except Exception as e:
             logger.error(f"生成PDF页面预览失败: {e}")
             # 页面预览失败不影响主流程
+
+        return True
 
 
 class ImageParser(DocumentParser):

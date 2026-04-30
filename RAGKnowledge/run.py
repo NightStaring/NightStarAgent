@@ -22,7 +22,18 @@ from .agent import AgenticRAG
 
 def show_db_info():
     db = VectorDB()
-    print(db.base_store.client.get_collections())
+    resp = db.base_store.client.get_collections()
+    names = [c.name for c in resp.collections]
+    print(f"Qdrant 集合（共 {len(names)} 个）: {names}")
+    for name in names:
+        info = db.base_store.get_collection_info(name)
+        if info.get("error"):
+            print(f"  - {name}: 读取失败 — {info['error']}")
+        else:
+            points = info.get("points_count")
+            indexed = info.get("vectors_count")
+            status = info.get("status")
+            print(f"  - {name}: points_count={points}, indexed_vectors_count={indexed}, status={status}")
 
 def create_db():
     db = VectorDB()
@@ -45,7 +56,8 @@ def clear_db():
 处理文档并写入向量库
 """
 def process_documents():
-    files_path = os.path.join(os.path.dirname(__file__), "dataset", "Chart-MRAG", "files")
+    # files_path = os.path.join(os.path.dirname(__file__), "dataset", "Chart-MRAG", "files")
+    files_path = os.path.join(os.path.dirname(__file__), "dataset", "test", "files")
     files = os.listdir(files_path)
     for file in tqdm(files):
         file_path = os.path.join(files_path, file)
@@ -72,4 +84,4 @@ def agent():
     logger.info(agentic_rag.run(question))
 
 if __name__ == "__main__":
-    agent()
+    show_db_info()
