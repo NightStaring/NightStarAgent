@@ -33,3 +33,6 @@ Thumbs.db
 
 # 数据集
 RAGKnowledge/dataset/
+
+# 文件
+docs/
